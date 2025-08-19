@@ -1,14 +1,32 @@
 from tensorflow.keras.applications import MobileNet
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras import layers, models
+from tensorflow.keras.models import save_model
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+from tensorflow.keras.optimizers import Adam
 import os
+import matplotlib.pyplot as plt
 
+# --------------------------
 # Path dataset
+# --------------------------
 train_dir = 'data/train'
 val_dir = 'data/validation'
 
-# Image preprocessing
-train_datagen = ImageDataGenerator(rescale=1./255)
+# --------------------------
+# Image preprocessing + Augmentation
+# --------------------------
+train_datagen = ImageDataGenerator(
+    rescale=1./255,
+    rotation_range=20,
+    width_shift_range=0.2,
+    height_shift_range=0.2,
+    shear_range=0.2,
+    zoom_range=0.2,
+    horizontal_flip=True,
+    fill_mode='nearest'
+)
+
 val_datagen = ImageDataGenerator(rescale=1./255)
 
 train_generator = train_datagen.flow_from_directory(
@@ -25,34 +43,76 @@ val_generator = val_datagen.flow_from_directory(
     class_mode='categorical'
 )
 
-# Load MobileNet tanpa fully connected layer (include_top=False)
+# --------------------------
+# Load MobileNet tanpa fully connected layer
+# --------------------------
 base_model = MobileNet(weights='imagenet', include_top=False, input_shape=(150, 150, 3))
-base_model.trainable = False  # freeze
+base_model.trainable = False  # freeze dulu
 
+# --------------------------
 # Tambah layer klasifikasi
+# --------------------------
 model = models.Sequential([
     base_model,
     layers.GlobalAveragePooling2D(),
     layers.Dense(128, activation='relu'),
+    layers.Dropout(0.5),  # tambah dropout
     layers.Dense(train_generator.num_classes, activation='softmax')
 ])
 
-model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+# Compile dengan learning rate lebih kecil
+model.compile(optimizer=Adam(learning_rate=1e-4),
+              loss='categorical_crossentropy',
+              metrics=['accuracy'])
 
-# Training
-model.fit(
+# --------------------------
+# Callbacks
+# --------------------------
+callbacks = [
+    EarlyStopping(patience=5, restore_best_weights=True, monitor='val_loss'),
+    ModelCheckpoint("outputs/best_model.keras", save_best_only=True, monitor='val_loss')
+]
+
+# --------------------------
+# Training -> simpan hasil ke history
+# --------------------------
+history = model.fit(
     train_generator,
-    epochs=10,
-    validation_data=val_generator
+    epochs=30,
+    validation_data=val_generator,
+    callbacks=callbacks
 )
 
-# Simpan model
+# --------------------------
+# Simpan model akhir
+# --------------------------
 if not os.path.exists('outputs'):
     os.makedirs('outputs')
 
-# model.save('outputs/model_mobilenet.h5')
-# model.save('outputs/modelv3.keras')  # Format Keras baru
-# model.save('outputs/modelv2.h5')
+save_model(model, 'outputs/final_model.keras')
 
-from tensorflow.keras.models import save_model
-save_model(model, 'outputs/modelV2.h5')
+# --------------------------
+# Grafik Training & Validation Accuracy
+# --------------------------
+plt.figure(figsize=(8, 5))
+plt.plot(history.history['accuracy'], label='Training Accuracy')
+plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
+plt.title('Training & Validation Accuracy')
+plt.xlabel('Epoch')
+plt.ylabel('Accuracy')
+plt.legend()
+plt.grid(True)
+plt.savefig('outputs/accuracy_plot.png')
+
+# --------------------------
+# Grafik Training & Validation Loss
+# --------------------------
+plt.figure(figsize=(8, 5))
+plt.plot(history.history['loss'], label='Training Loss')
+plt.plot(history.history['val_loss'], label='Validation Loss')
+plt.title('Training & Validation Loss')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.legend()
+plt.grid(True)
+plt.savefig('outputs/loss_plot.png')
